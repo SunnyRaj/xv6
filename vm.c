@@ -17,7 +17,10 @@ void
 seginit(void)
 {
   struct cpu *c;
-
+  /* Main memory calls this once, to set up a flat memory model. 
+  *  This function is called only once in the main function and never
+  *  used again.
+  */
   // Map "logical" addresses to virtual addresses using identity map.
   // Cannot share a CODE descriptor for both kernel and user
   // because it would have to have DPL_USR, but the CPU forbids
@@ -49,9 +52,20 @@ walkpgdir(pde_t *pgdir, const void *va, int alloc)
   pte_t *pgtab;
 
   pde = &pgdir[PDX(va)];
+  /* Jiguo: The following code is to check if that entry is
+        presented in the page directory, and if so, use PTE_ADDR to
+        get higher 20 bits of the entry, which is PPN (Each entry
+        contains a 20-bit physical page number/frame (PPN) and some
+        flags, and this is same to page directory and page
+        table). This is where our confusion during the discussion is
+        from. Then the start address of the page table can be located
+        by p2v(PPN) or simply by pointing at a newly created page */
   if(*pde & PTE_P){
     pgtab = (pte_t*)p2v(PTE_ADDR(*pde));
   } else {
+  /* Jiguo: The code is to allocate the page for the page table if
+      * the entry is not presented in the page directory, then prepare
+      * the pde */
     if(!alloc || (pgtab = (pte_t*)kalloc()) == 0)
       return 0;
     // Make sure all those PTE_P bits are zero.
@@ -61,6 +75,12 @@ walkpgdir(pde_t *pgdir, const void *va, int alloc)
     // entries, if necessary.
     *pde = v2p(pgtab) | PTE_P | PTE_W | PTE_U;
   }
+  /* Jiguo: At this point, pgtab has pointed to the start address
+      * of page table and now the middle 10 bits in va is used to
+      * locate the PTE entry. The highest 20 bits in that PTE will be
+      * replaced with 20-bit PPN. The final physical address is
+      * computed by 20-bit PPN + 12-bit offset from va. Then we are
+      * done :) */
   return &pgtab[PTX(va)];
 }
 
@@ -148,8 +168,8 @@ setupkvm(void)
 void
 kvmalloc(void)
 {
-  kpgdir = setupkvm();
-  switchkvm();
+  kpgdir = setupkvm(); // Create a Page Table
+  switchkvm(); // Switch to that page table with mappings above KERNBASE
 }
 
 // Switch h/w page table register to the kernel-only page table,
@@ -161,15 +181,23 @@ switchkvm(void)
 }
 
 // Switch TSS and h/w page table to correspond to process p.
+// Tell the hardware to start using the process p's page table.
+// Set up task state segment (TSS) that instructs the h/w to execute
+// system calls and interrupts on process p's kernel stack
 void
 switchuvm(struct proc *p)
 {
   pushcli();
+  // Store the address of the top of the kernel stack of the user
+  // process into SEG_TSS.
   cpu->gdt[SEG_TSS] = SEG16(STS_T32A, &cpu->ts, sizeof(cpu->ts)-1, 0);
   cpu->gdt[SEG_TSS].s = 0;
+  // When a trap occurs, if p is in user_mode, load ss and esp from task
+  // segment descriptor, push the old user ss and esp onto the new stack
   cpu->ts.ss0 = SEG_KDATA << 3;
   cpu->ts.esp0 = (uint)proc->kstack + KSTACKSIZE;
   ltr(SEG_TSS << 3);
+  // why is this if condition not checked at the beginning of this funtion???
   if(p->pgdir == 0)
     panic("switchuvm: no pgdir");
   lcr3(v2p(p->pgdir));  // switch to new address space
