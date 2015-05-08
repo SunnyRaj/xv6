@@ -126,8 +126,10 @@ struct segdesc {
 #define PTXSHIFT        12      // offset of PTX in a linear address
 #define PDXSHIFT        22      // offset of PDX in a linear address
 
-#define PGROUNDUP(sz)  (((sz)+PGSIZE-1) & ~(PGSIZE-1))
-#define PGROUNDDOWN(a) (((a)) & ~(PGSIZE-1))
+// Round up and round down to the nearest multiple of PGSIZE
+// for a = 9 and PGSIZE = 4 the outout for each of them are:
+#define PGROUNDUP(sz)  (((sz)+PGSIZE-1) & ~(PGSIZE-1))  // 12
+#define PGROUNDDOWN(a) (((a)) & ~(PGSIZE-1))            // 8
 
 // Page table/directory entry flags.
 #define PTE_P           0x001   // Present
